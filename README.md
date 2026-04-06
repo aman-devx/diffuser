@@ -4,10 +4,6 @@
 
 We will be finally building what we have been working up to! Latent Diffusion Models! Now to fully understand this, there are a lot of pre-requisites:
 
-- [Variational AutoEncoders](https://github.com/priyammaz/PyTorch-Adventures/blob/main/PyTorch%20for%20Generation/AutoEncoders/Intro%20to%20AutoEncoders/Variational_AutoEncoders.ipynb)
-- [UNET](https://github.com/priyammaz/PyTorch-Adventures/tree/main/PyTorch%20for%20Computer%20Vision/UNET%20for%20Segmentation)
-- [GAN](https://github.com/priyammaz/PyTorch-Adventures/tree/main/PyTorch%20for%20Generation/Generative%20Adversarial%20Network/Intro%20to%20GANs)
-- [Diffusion](https://github.com/priyammaz/PyTorch-Adventures/tree/main/PyTorch%20for%20Generation/Diffusion/Intro%20to%20Diffusion)
 
 What makes latent diffusion models so unique is, instead of training a the expensive diffusion model (with our UNet) on the high dimensional pixel space, we can instead do it on a compressed latent space! For example, instead of doing an expensive diffusion model at a ```3 x 224 x 224``` image, we can use an AutoEncoder to first compress the image down to ```4 x 32 x 32``` and then do diffusion at this must lower dimensional compressed image!
 
@@ -34,31 +30,11 @@ We can now use this super helpful package [img2dataset](https://github.com/rom15
 
 All we need to do is pass in the path to our TSV files and the path to the output folder where we want to save our data. I also choose to save the dataset as a **parquet** format, so I can then use Huggingface datasets to prep it!
 
-```bash
-img2dataset --url_list <PATH_TO_TSV> \
-            --input_format "tsv"\
-            --url_col "url" \
-            --caption_col "caption" \
-            --output_format parquet \
-            --output_folder <PATH_TO_RAW_SAVE> \
-            --processes_count 32 \
-            --thread_count 128 \
-            --image_size 256 \
-            --resize_mode keep_ratio
-```
+
 
 Now that we have the data downloaded (this takes some time) we need to prepare it. To prepare our dataset, all we need to do is convert the binary data that was downloaded to PIL Images, and we also need to tokenize all the text! We can then take all the processed data and save our final copy of it!
 
-```bash
-python prep_cc.py --path_to_data_root <PATH_TO_RAW_SAVE> \
-                  --path_to_save <PATH_TO_PROCESSED_SAVE> \
-                  --hf_clip_model_name openai/clip-vit-large-patch14 \
-                  --hf_cache_dir <HF_CACHE_DIR> \
-                  --cpu_batch_size 512 \
-                  --gpu_batch_size 256 \
-                  --num_cpu_workers 32 \
-                  --dtype bfloat16
-```
+
 Now even though this dataset had 3 Million or so images, not all the links are valid (websites can change or break over time), so I had a final dataset of about 2.3 Million images at the end!
 
 ## Stage 1: VAE Pretraining
@@ -78,11 +54,6 @@ LPIPS is a neural network (VGG) that has been trained on patch similarity. It es
 ##### Use the LPIPS Package 
 Use of LPIPS is very easy, here is the example from the repository:
 
-```python
-import lpips
-loss_fn = lpips.LPIPS(net='vgg')
-d = loss_fn.forward(im0,im1)
-```
 
 ##### Lets Build/Train LPIPS
 It would be more interesting to actually build and train our own LPIPS, so lets do that! To do this, we will be using a dataset called [Berkeley Adobe Perceptual Patch Similarity Dataset (BAPPS)](https://www.kaggle.com/datasets/chaitanyakohli678/berkeley-adobe-perceptual-patch-similarity-bapps) that you can go ahead and download from Kaggle!
@@ -90,9 +61,6 @@ It would be more interesting to actually build and train our own LPIPS, so lets 
 This dataset has triplets of images, the original image and two different perturbations done to it. A human evaluator then picks which image is closer to the
 original. Here is an example!
 
-| Reference | Option 1 | Option 2 |
-|:----------------------------:|:----------------------------:|:----------------------------:|
-| ![Image 1](bapps_sample/ref.png) | ![Image 2](bapps_sample/option1.png) | ![Image 3](bapps_sample/option2.png) |
 
 A human will then label a dataset like this identifying things like, option 1 is closer to the reference than option 2.
 
@@ -100,24 +68,7 @@ The reason this works is, the neural network will learn which images are percept
 
 To train our LPIPS you can use the following script!
 
-```bash
-accelerate launch lpips_trainer.py \
-  --path_to_root <PATH_TO_DATA_ROOT> \
-  --work_dir <PATH_TO_WORK_DIR> \
-  --checkpoint_name "lpips_64x64_vgg.pt" \
-  --img_size 64 \
-  --batch_size 25 \
-  --num_workers 32 \
-  --num_epochs 10 \
-  --decay_epochs 5 \
-  --logging_steps 250 \
-  --pretrained_backbone \
-  --use_dropout \
-  --img_range minus_one_to_one \
-  --middle_channels 32 \
-  --eval_lpips_pkg \
-  --mixed_precision 
-```
+
 
 ##### Evaluate Model
 
@@ -202,69 +153,19 @@ In the [```stageq_vae_train.yaml```](configs/stage1_vae_train.yaml) we define ev
 
 Its time to train our VAE. You can do that simply with the following command:
 
-```bash
-accelerate launch stage1_vae_trainer.py \
-  --experiment_name "VAETrainer" \
-  --wandb_run_name "vae_celeba" \
-  --working_directory "work_dir/vae_celeba" \
-  --training_config "configs/stage1_vae_train.yaml" \
-  --model_config "configs/ldm.yaml" \
-  --dataset celebahq \
-  --path_to_dataset "<PATH_TO_CELEBAHQ>" \
-  --path_to_save_gens "src/celebahq_vae_gen"
-```
 If you want to train the model on Conceptual Captions then similarly you can do:
 
-```bash
-accelerate launch stage1_vae_trainer.py \
-  --experiment_name "VAETrainer" \
-  --wandb_run_name "vae_cc" \
-  --working_directory "work_dir/vae_cc" \
-  --training_config "configs/stage1_vae_train_cc.yaml" \
-  --dataset conceptual_captions \
-  --path_to_dataset "<PATH_TO_CONCEPTUAL_CAPTIONS>" \
-  --path_to_save_gens "src/cc_gen"
-```
 
-### Results
-
-The proof is in the pudding! What do reconstructions from our VAE look like? Lets first look at our CelebAHQ
-
-#### CelebAHQ VAE (No LPIPS/No PatchGAN)
-
-<img src="sample_gens/autoencoder/celeb_vae_nopercep.png" alt="drawing" width="800"/>
-
-#### CelebAHQ VAE (w/ LPIPS + PatchGAN)
-
-<img src="sample_gens/autoencoder/celeb_vae.png" alt="drawing" width="800"/>
-
-#### CelebAHQ VQ-VAE (w/ LPIPS + PatchGAN)
-
-<img src="sample_gens/autoencoder/celeb_vqvae.png" alt="drawing" width="800"/>
 
 The results on CelebAHQ using LPIPS and the perceptual Loss is significantly better, as we dont have any significant amounts of smoothing. Look like perceptual losses do something helpful for our final image quality! The VQ-VAE images also look very good, maybe slightly sharper on the skin texture, but its hard to tell. 
 
 Lets look at the other datasets now!
 
-#### Conceptual Captions
-
-<img src="sample_gens/autoencoder/cc_vae.png" alt="drawing" width="800"/>
-
-#### ImageNet
-
-<img src="sample_gens/autoencoder/imagenet_vae.png" alt="drawing" width="800"/>
 
 ### Compute Latent Scaling Factor
 
 One thing you will see in the Latent Diffusion model implementation is the constant 0.18215 used to scale the output of the VAE Encoder. If you search for this constant in the [Huggingface Diffusers](https://github.com/huggingface/diffusers) package, it will show up everywhere! For example here are some lines from one of their stable diffusion pipelines:
 
-```python
-image_latents = init_latent_image_dist.sample(generator=generator)
-image_latents = 0.18215 * image_latents
-...
-latents = 1 / 0.18215 * latents
-image = self.vae.decode(latents).sample
-```
 
 The main idea here is that, our VAE is trained to hopefully have a standard normal latent space, but in practice this isn't the case. The mean should be close to 0, but the variance may not be 1! Luckily for us, we can easily scale a gaussian distributions variance by multiplying by a constant, and thats exactly what you see here. 
 
@@ -277,22 +178,9 @@ The reason we are doing this is, now that we are training our diffusion model in
 #### Calculate our own Latent Scaling 
 Now 0.18215 was for the VAE that they trained on the LAION-5B dataset. We should calculate our own. Because we have a few different models, we have to calculate this for each model on each dataset, so we can do that as follows:
 
-```bash
-python compute_vae_scaling.py \
-    --path_to_pretrained_weights <PATH_TO_VAE.safetensors> \
-    --dataset "celebahq" \
-    --path_to_dataset "<PATH_TO_DATA>"
-
-```
 
 By doing this, I got the following scaling factors (which I have stored in the LDM config):
 
-```bash
-  #### Precomputed Constants ###
-  celebahq: 0.8924759
-  imagenet: 0.9515730
-  conceptual_captions: 0.9091397
-```
 
 Also notice that the constants I calculated are pretty close to 1. This means, my VAE was able to successfully get a latent space close to a variance of 1 which is cool. The most likely reason the original VAE from stable diffusion couldnt is because its trained on a much larger dataset, and the model was unable to compress the variance down. Either way, this is just a good next step!
 
@@ -302,7 +190,7 @@ Now that we have a model that can successfully compress and reconstruct, its tim
 
 ### Diffusion Scheduler
 
-The original paper used a DDIM scheduler, but I just stuck to regular DDPM here to avoid making this mode complicated than it needs to be! I use the same DDPM scheduler that we wrote in the [Intro to Diffusion](https://github.com/priyammaz/PyTorch-Adventures/tree/main/PyTorch%20for%20Generation/Diffusion/Intro%20to%20Diffusion) with a linear variance schedule.
+The original paper used a DDIM scheduler, but I just stuck to regular DDPM here to avoid making this mode complicated than it needs to be! I use the same DDPM scheduler that we wrote in the [Intro to Diffusion]
 
 ### Train Diffusion Model
 
@@ -310,87 +198,16 @@ All we have left to do is train Diffusion! The training config can be changed at
 
 Here is an example lauch script to do this:
 
-```bash
-accelerate launch stage2_diffusion_trainer.py \
-  --experiment_name "DiffusionTrainer" \
-  --wandb_run_name "diffusion_celebahq" \
-  --working_directory "work_dir/diffusion_celebahq" \
-  --training_config "configs/stage2_diffusion_train.yaml" \
-  --model_config "configs/ldm.yaml" \
-  --path_to_vae_backbone "<PATH_TO_VAE.safetensors>" \
-  --dataset celebahq \
-  --path_to_dataset "<PATH_TO_DATA>" \
-  --path_to_save_gens "src/diffusion_celebahq"
-```
 
 When training the Text Conditional Diffusion model on Conceptual Captions, the script looks like:
 
-```bash
-accelerate launch stage2_diffusion_trainer.py \
-  --experiment_name "DiffusionTrainer" \
-  --wandb_run_name "diffusion_cc" \
-  --working_directory "work_dir/diffusion_cc" \
-  --training_config "configs/stage2_diffusion_train.yaml" \
-  --model_config "configs/ldm.yaml" \
-  --path_to_vae_backbone "<PATH_TO_VAE.safetensors>" \
-  --dataset conceptual_captions \
-  --path_to_dataset "<PATH_TO_DATA>" \
-  --path_to_save_gens "src/diffusion_cc"
-```
 
 Also, you can optionally edit the file [sample_text_cond_prompts.txt](inputs/sample_text_cond_prompts.txt). These are the prompts, that as the model is training, you can see what the results look like on these specific text inputs!
 
-### Results
-
-To quickly generate an image you can use the following for the CelebHQ run:
-
-```bash
-python inference_ldm.py 
-  --model_config "configs/ldm.yaml" \
-  --path_to_weights "work_dir/diffusion_celebahq/model.safetensors" \
-  --training_dataset "celebahq"
-```
-#### CelebAHQ
-
-Lets first see what unconditional generation looks like! 
-
-| Sample1 | Sample2 | Sample3 |
-|:----------------------------:|:----------------------------:|:----------------------------:|
-| ![Image 1](sample_gens/diffusion/celeba1.png) | ![Image 2](sample_gens/diffusion/celeba2.png) | ![Image 3](sample_gens/diffusion/celeba3.png) |
-
-Im pretty happy with these!
-
-#### Conceptual Captions
-
-To quickly generate an image you can use the following for the Conceptual Captions run:
-
-```bash
-python inference_ldm.py \
-  --model_config "configs/ldm.yaml" \
-  --path_to_weights "work_dir/diffusion_cc/model.safetensors" \
-  --text_conditional \
-  --training_dataset "conceptual_captions" \
-  --prompt "A beautiful sunset at the beach"
-
-```
-
-What about when we provide some prompts? Lets try the following text prompts:
-
-- **Prompt 1**: A beautiful sunset at the beach
-- **Prompt 2**: A foggy magical forest
-- **Prompt 3**: A futuristic city skyline at night with neon lights
-- **Prompt 4**: A cozy coffee shop with books
-
-| Prompt 1 | Prompt 2 | Prompt 3 | Prompt 4 |
-|:----------------------------:|:----------------------------:|:----------------------------:| :----------------------------:|
-| ![Image 1](sample_gens/diffusion/sunset_beach.png) | ![Image 2](sample_gens/diffusion/forest.png) | ![Image 3](sample_gens/diffusion/futuristic_city.png) | ![Image 3](sample_gens/diffusion/cafe.png) |
- 
-
-These also look pretty cool! I mean they arent Stable Diffusion level, but I dont have 256 GPUs just lying around, as a proof of concept though I am quite happy!
 
 #### Why Clean Training Data Matters
  
 An interesting attribute of my generations was that a watermark shows up in the generations! This means the Conceptual Captions dataset had a ton of watermarks on the pictures and the VAE ended up encoding this in the latent space. Here is an example of an image I generated with the prompt *A beautiful sunset at the beach* and the watermark and border shows up. This is why cool datasets like [LAION-AESTHETICS](https://laion.ai/blog/laion-aesthetics/) because images are prefiltered for quality. 
 
-<img src="sample_gens/diffusion/watermarked.png" alt="drawing" width="250"/>
+
 
